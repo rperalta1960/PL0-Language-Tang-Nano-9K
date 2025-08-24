@@ -1,4 +1,7 @@
-﻿using System;
+﻿// result1 = fact(5) = 120
+// result2 = fib(5) = 5 
+using System;
+using System.IO;
 using Irony.Parsing;
 using PL0_Language.Gramatica;
 using PL0_Language.Codegen;
@@ -9,17 +12,35 @@ namespace PL0_Language
     {
         static void Main(string[] args)
         {
+            // Programa de prueba (factorial y fibonacci)
             string code = @"
-                const a = 10;
-                var x;
-                procedure suma;
+                const n = 5;
+                var result1, result2;
+
+                function fact(x: integer): integer;
                 begin
-                    x := x + x
+                    if x = 0 then
+                        return 1
+                    else
+                        return x * fact(x - 1)
                 end;
+
+                function fib(x: integer): integer;
                 begin
-                    x := a;
-                    call suma;
-                    !x
+                    if x = 0 then
+                        return 0
+                    else
+                        if x = 1 then
+                            return 1
+                        else
+                            return fib(x - 1) + fib(x - 2)
+                end;
+
+                begin
+                    result1 := fact(n);    // 120
+                    !result1;
+                    result2 := fib(5);     // 5
+                    !result2
                 end.
             ";
 
@@ -29,47 +50,25 @@ namespace PL0_Language
 
             if (tree.HasErrors())
             {
-                Console.WriteLine("Errores de compilación encontrados:");
+                Console.WriteLine("Errores de compilación:");
                 foreach (var msg in tree.ParserMessages)
-                {
-                    Console.WriteLine($"[Línea {msg.Location.Line + 1}, Columna {msg.Location.Column + 1}] {msg.Message}");
-                }
+                    Console.WriteLine($"[L{msg.Location.Line + 1}, C{msg.Location.Column + 1}] {msg.Message}");
                 return;
             }
 
-            Console.WriteLine("Árbol de análisis sintáctico:");
-            PrintTree(tree.Root, 0);
-
-            // Generar ensamblador J1
             var gen = new CodeGenerator();
             var asm = gen.Generate(tree.Root);
 
-            Console.WriteLine("\n=== Ensamblador J1 (optimizado) ===\n");
+            Console.WriteLine("\n=== Ensamblador J1 ===\n");
             Console.WriteLine(asm);
-
             File.WriteAllText("out.j1.s", asm);
-            Console.WriteLine("\nGuardado en out.j1.s");
 
-            // << Montar .s -> .hex y .lst
             var assembler = new AssemblerJ1();
             var result = assembler.Assemble(asm);
+            File.WriteAllLines("out.j1.hex", result.HexLines);
+            File.WriteAllText("out.j1.lst", result.Listing);
 
-            File.WriteAllLines("out.j1.hex", result.HexLines); // cada línea: palabra de 16 bits en HEX (XXXX)
-            File.WriteAllText("out.j1.lst", result.Listing);   // listado con dirección, hex y fuente
-
-            Console.WriteLine("Guardado en out.j1.hex y out.j1.lst");
-        }
-
-        static void PrintTree(ParseTreeNode node, int indent = 0)
-        {
-            string indentStr = new string(' ', indent * 2);
-            if (node.Token != null)
-                Console.WriteLine($"{indentStr}{node.Term.Name} -> '{node.Token.Text}'");
-            else
-                Console.WriteLine($"{indentStr}{node.Term.Name}");
-
-            foreach (var child in node.ChildNodes)
-                PrintTree(child, indent + 1);
+            Console.WriteLine("\nGenerado: out.j1.s, out.j1.hex, out.j1.lst");
         }
     }
 }
