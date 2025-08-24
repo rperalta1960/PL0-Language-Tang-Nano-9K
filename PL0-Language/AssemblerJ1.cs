@@ -66,7 +66,7 @@ namespace PL0_Language.Codegen
                 else throw new Exception($"Línea {i + 1}: mnemónico desconocido '{mn}'.");
             }
 
-            var hex = new List<string>(pass1.Count);
+            var hex = new List<string>(pass1.Count); 
             var lst = new StringBuilder();
             foreach (var ins in pass1)
             {
