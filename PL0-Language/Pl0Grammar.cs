@@ -7,17 +7,20 @@ namespace PL0_Language.Gramatica
     {
         public Pl0Grammar()
         {
-            // Comentarios
+            // ===== Comentarios =====
             var blockComment = new CommentTerminal("block-comment", "(*", "*)");
             var lineComment = new CommentTerminal("line-comment", "//", "\n", "\r\n");
             NonGrammarTerminals.Add(blockComment);
             NonGrammarTerminals.Add(lineComment);
 
-            // Terminales
+            // ===== Terminales =====
             var number = TerminalFactory.CreateCSharpNumber("number");
             var identifier = TerminalFactory.CreateCSharpIdentifier("identifier");
 
-            // Símbolos
+            // Literal de carácter con escapes comunes
+            var charlit = new StringLiteral("charlit", "'", StringOptions.AllowsAllEscapes);
+
+            // Símbolos / puntuación
             var semicolon = ToTerm(";");
             var period = ToTerm(".");
             var comma = ToTerm(",");
@@ -30,6 +33,8 @@ namespace PL0_Language.Gramatica
             var div = ToTerm("/");
             var lparen = ToTerm("(");
             var rparen = ToTerm(")");
+            var shl = ToTerm("<<");
+            var shr = ToTerm(">>");
 
             // Palabras clave
             var kwConst = ToTerm("const");
@@ -41,52 +46,81 @@ namespace PL0_Language.Gramatica
             var kwEnd = ToTerm("end");
             var kwIf = ToTerm("if");
             var kwThen = ToTerm("then");
+            var kwElse = ToTerm("else");
             var kwWhile = ToTerm("while");
             var kwDo = ToTerm("do");
             var kwReturn = ToTerm("return");
             var kwInteger = ToTerm("integer");
-            var kwWrite = ToTerm("!");
-            var kwRead = ToTerm("?");
-            var kwElse = ToTerm("else");
+            var kwChar = ToTerm("char");
+            var kwWrite = ToTerm("!"); // salida
+            var kwRead = ToTerm("?"); // entrada
 
+            // Operadores bit a bit como palabras clave (unarios y binarios)
+            var kwNot = ToTerm("not");
+            var kwAnd = ToTerm("and");
+            var kwNand = ToTerm("nand");
+            var kwXor = ToTerm("xor");
+            var kwNxor = ToTerm("nxor");
+            var kwOr = ToTerm("or");
+            var kwNor = ToTerm("nor");
 
-            // No terminales
+            // ===== No terminales =====
             var Program = new NonTerminal("Program");
             var Block = new NonTerminal("Block");
+
             var ConstDeclOpt = new NonTerminal("ConstDeclOpt");
             var VarDeclOpt = new NonTerminal("VarDeclOpt");
             var SubrDeclListOpt = new NonTerminal("SubrDeclListOpt");
+
             var ConstDecl = new NonTerminal("ConstDecl");
             var ConstList = new NonTerminal("ConstList");
+
             var VarDecl = new NonTerminal("VarDecl");
             var IdList = new NonTerminal("IdList");
+
             var SubrDeclList = new NonTerminal("SubrDeclList");
             var SubrDecl = new NonTerminal("SubrDecl");
+
             var ProcDecl = new NonTerminal("ProcDecl");
             var FuncDecl = new NonTerminal("FuncDecl");
+
             var ParamListOpt = new NonTerminal("ParamListOpt");
             var ParamList = new NonTerminal("ParamList");
             var Param = new NonTerminal("Param");
             var Type = new NonTerminal("Type");
+
             var Statement = new NonTerminal("Statement");
             var StatementList = new NonTerminal("StatementList");
             var Return = new NonTerminal("Return");
+
             var Call = new NonTerminal("Call");
-            var ArgListOpt = new NonTerminal("ArgListOpt");         // (args) | ε
+            var ArgListOpt = new NonTerminal("ArgListOpt");          // con paréntesis (CALL)
             var ArgList = new NonTerminal("ArgList");
-            var ArgListOptContent = new NonTerminal("ArgListOptContent");  // args | ε (sin paréntesis)
-            var Expression = new NonTerminal("Expression");
-            var Term = new NonTerminal("Term");
-            var Factor = new NonTerminal("Factor");
+            var ArgListOptContent = new NonTerminal("ArgListOptContent");   // SIN paréntesis (FunCall)
+
+            // Expresiones con niveles de precedencia
+            var Expression = new NonTerminal("Expression");  // OrExpr
+            var OrExpr = new NonTerminal("OrExpr");
+            var XorExpr = new NonTerminal("XorExpr");
+            var AndExpr = new NonTerminal("AndExpr");
+            var AddExpr = new NonTerminal("AddExpr");
+            var MulExpr = new NonTerminal("MulExpr");
+            var ShiftExpr = new NonTerminal("ShiftExpr");
+            var ShiftCount = new NonTerminal("ShiftCount");
+            var UnaryExpr = new NonTerminal("UnaryExpr");
+            var Primary = new NonTerminal("Primary");
+
             var FunCall = new NonTerminal("FunCall");
             var Condition = new NonTerminal("Condition");
 
-            // Reglas
+            // ===== Reglas =====
             Root = Program;
 
             Program.Rule = Block + period;
+
             Block.Rule = ConstDeclOpt + VarDeclOpt + SubrDeclListOpt + Statement;
 
+            // Constantes y variables
             ConstDeclOpt.Rule = Empty | ConstDecl;
             ConstDecl.Rule = kwConst + ConstList + semicolon;
             ConstList.Rule = MakePlusRule(ConstList, comma, identifier + equal + number);
@@ -95,28 +129,32 @@ namespace PL0_Language.Gramatica
             VarDecl.Rule = kwVar + IdList + semicolon;
             IdList.Rule = MakePlusRule(IdList, comma, identifier);
 
+            // Subprogramas
             SubrDeclListOpt.Rule = Empty | SubrDeclList;
             SubrDeclList.Rule = MakePlusRule(SubrDeclList, SubrDecl);
             SubrDecl.Rule = ProcDecl | FuncDecl;
 
+            // Parámetros y tipos
             ParamListOpt.Rule = Empty | lparen + ParamList + rparen;
             ParamList.Rule = MakePlusRule(ParamList, comma, Param);
             Param.Rule = identifier + colon + Type;
-            Type.Rule = kwInteger;
+            Type.Rule = kwInteger | kwChar;
 
+            // Procedimiento y función
             ProcDecl.Rule = kwProcedure + identifier + ParamListOpt + semicolon + Block + semicolon;
             FuncDecl.Rule = kwFunction + identifier + ParamListOpt + colon + Type + semicolon + Block + semicolon;
 
+            // Llamadas y argumentos
             ArgList.Rule = MakePlusRule(ArgList, comma, Expression);
-            ArgListOpt.Rule = Empty | lparen + ArgList + rparen;    // para CALL
-            ArgListOptContent.Rule = Empty | ArgList;                       // para FunCall
+            ArgListOpt.Rule = Empty | lparen + ArgList + rparen;     // para 'call'
+            ArgListOptContent.Rule = Empty | ArgList;                        // para 'FunCall' (SIN paréntesis)
 
             Call.Rule = kwCall + identifier + ArgListOpt;
 
+            // Sentencias (incluye return, I/O, if con else)
             Statement.Rule = identifier + assign + Expression
                            | Call
                            | kwBegin + StatementList + kwEnd
-                           // ← alternativa con ELSE primero
                            | kwIf + Condition + kwThen + Statement + kwElse + Statement
                            | kwIf + Condition + kwThen + Statement
                            | kwWhile + Condition + kwDo + Statement
@@ -128,26 +166,67 @@ namespace PL0_Language.Gramatica
             Return.Rule = kwReturn + Expression;
             StatementList.Rule = MakePlusRule(StatementList, semicolon, Statement);
 
-            Expression.Rule = Expression + plus + Term
-                            | Expression + minus + Term
-                            | Term;
+            // ===== Expresiones con precedencia =====
+            Expression.Rule = OrExpr;
 
-            Term.Rule = Term + mult + Factor
-                      | Term + div + Factor
-                      | Factor;
+            OrExpr.Rule = OrExpr + kwOr + XorExpr
+                         | OrExpr + kwNor + XorExpr
+                         | XorExpr;
 
+            XorExpr.Rule = XorExpr + kwXor + AndExpr
+                         | XorExpr + kwNxor + AndExpr
+                         | AndExpr;
+
+            AndExpr.Rule = AndExpr + kwAnd + AddExpr
+                         | AndExpr + kwNand + AddExpr
+                         | AddExpr;
+
+            AddExpr.Rule = AddExpr + plus + MulExpr
+                         | AddExpr + minus + MulExpr
+                         | MulExpr;
+
+            MulExpr.Rule = MulExpr + mult + ShiftExpr
+                         | MulExpr + div + ShiftExpr
+                         | ShiftExpr;
+
+            ShiftExpr.Rule = ShiftExpr + shl + ShiftCount
+                           | ShiftExpr + shr + ShiftCount
+                           | UnaryExpr;
+
+            ShiftCount.Rule = number | identifier;   // permite usar CONSTs como n1, n4, n15
+
+
+            UnaryExpr.Rule = kwNot + UnaryExpr
+                           | Primary;
+
+            // Primary (átomos)
             FunCall.Rule = identifier + PreferShiftHere() + lparen + ArgListOptContent + rparen;
-            Factor.Rule = FunCall | identifier | number | lparen + Expression + rparen;
 
+            Primary.Rule = FunCall
+                         | identifier
+                         | number
+                         | charlit
+                         | lparen + Expression + rparen;
+
+            // Condición (igualdad)
             Condition.Rule = Expression + equal + Expression;
 
-            // Decorado
+            // ===== Decorado léxico =====
             MarkReservedWords("const", "var", "procedure", "function", "call", "begin", "end",
-                  "if", "then", "else", "while", "do", "return", "integer");
+                              "if", "then", "else", "while", "do", "return", "integer", "char",
+                              "not", "and", "nand", "xor", "nxor", "or", "nor");
 
-            MarkPunctuation(";", ",", ":=", "=", ".", "(", ")", ":");
-            RegisterOperators(1, "+", "-");
-            RegisterOperators(2, "*", "/");
+            // Puntuación y operadores
+            MarkPunctuation(";", ",", ":=", "=", ".", "(", ")", ":", "<<", ">>");
+            // (Registro de operadores, opcional si ya hay precedencia por reglas)
+            RegisterOperators(1, "not");
+            RegisterOperators(2, "<<", ">>");
+            RegisterOperators(3, "*", "/");
+            RegisterOperators(4, "+", "-");
+            RegisterOperators(5, "and", "nand");
+            RegisterOperators(6, "xor", "nxor");
+            RegisterOperators(7, "or", "nor");
         }
     }
 }
+

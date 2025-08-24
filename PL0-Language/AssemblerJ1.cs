@@ -20,11 +20,19 @@ namespace PL0_Language.Codegen
     {
         private static readonly Dictionary<string, ushort> ALU = new(StringComparer.OrdinalIgnoreCase)
         {
+            // --- ALU base (placeholders consistentes con tus versiones previas) ---
             { "DUP", 0x6081 }, { "OVER", 0x6181 }, { "INVERT", 0x6600 },
             { "ADD", 0x6203 }, { "SUB", 0x6303 }, { "SWAP", 0x6180 },
             { "NIP", 0x6003 }, { "DROP", 0x6103 }, { "EXIT", 0x7018 },
             { "@",   0x6C00 }, { "!",    0x6123 }, { ">R",   0x61CB },
             { "R>",  0x7B99 }, { "R@",   0x7B81 },
+
+            // --- NUEVOS: bit a bit y corrimientos (asigna códigos no usados) ---
+            { "AND",    0x6403 },
+            { "OR",     0x6503 },
+            { "XOR",    0x6703 },
+            { "LSHIFT", 0x6A10 },   // desplazar T/N a la izquierda 1 bit (lógico)
+            { "RSHIFT", 0x6A11 },   // desplazar a la derecha 1 bit (lógico)
         };
 
         private sealed record Insn(int LineNo, string Source, string Mn, string? Arg, int Address);
@@ -110,8 +118,8 @@ namespace PL0_Language.Codegen
         {
             tok = tok.Trim();
             if (tok.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
-                return int.TryParse(tok[2..], NumberStyles.AllowHexSpecifier, System.Globalization.CultureInfo.InvariantCulture, out value);
-            return int.TryParse(tok, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out value);
+                return int.TryParse(tok[2..], NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out value);
+            return int.TryParse(tok, NumberStyles.Integer, CultureInfo.InvariantCulture, out value);
         }
 
         private static ushort Encode(Insn ins, Dictionary<string, int> labels)

@@ -26,7 +26,7 @@ namespace PL0_Language.Codegen
             A.Emit("JUMP main");
             VisitProgram(root);
 
-            // Stubs runtime
+            // Stubs runtime (ajusta si tienes implementaciones reales)
             A.Mark("write"); A.Comment("escribir T"); A.Emit("EXIT");
             A.Mark("read"); A.Comment("leer a T"); A.Emit("EXIT");
             A.Mark("mul"); A.Comment("multiplicación"); A.Emit("EXIT");
@@ -35,15 +35,26 @@ namespace PL0_Language.Codegen
             return A.GetText();
         }
 
-        // ===== Helpers parse =====
+        // ===== Helpers de parse =====
         private static ParseTreeNode? ChildByName(ParseTreeNode n, string termName) =>
             n.ChildNodes.FirstOrDefault(c => string.Equals(c.Term.Name, termName, StringComparison.Ordinal));
+
         private static IEnumerable<ParseTreeNode> ChildrenByName(ParseTreeNode n, string termName) =>
             n.ChildNodes.Where(c => string.Equals(c.Term.Name, termName, StringComparison.Ordinal));
+
         private static bool IsToken(ParseTreeNode n, string termName) =>
             string.Equals(n.Term.Name, termName, StringComparison.Ordinal);
+
         private static string TokenText(ParseTreeNode n) => n.Token?.ValueString ?? n.Token?.Text ?? "";
         private static int TokenInt(ParseTreeNode n) => Convert.ToInt32(n.Token?.Value ?? 0);
+
+        // char literal -> entero (0..65535)
+        private static int TokenChar(ParseTreeNode n)
+        {
+            // Irony devuelve la cadena sin comillas; si es escape ya viene des-escapada
+            string s = n.Token?.ValueString ?? n.Token?.Text?.Trim('\'') ?? "";
+            return s.Length > 0 ? s[0] : 0;
+        }
 
         private static IEnumerable<ParseTreeNode> AllIdentifiers(ParseTreeNode n)
         {
@@ -366,16 +377,18 @@ namespace PL0_Language.Codegen
             if (IsToken(head, "if"))
             {
                 var cond = ChildByName(node, "Condition");
-                var thenSt = node.ChildNodes.LastOrDefault(c => c.Term.Name == "Statement");
+                var thenSt = node.ChildNodes.FirstOrDefault(c => c.Term.Name == "Statement" && c != cond);
+                // Busca 'else' (si existe, suele ser el último Statement)
+                var elseSt = node.ChildNodes.LastOrDefault(c => c.Term.Name == "Statement" && c != cond && c != thenSt);
+
                 if (cond == null || thenSt == null) return false;
 
-                if (TryConstEq(cond, out bool eq)) { if (eq) hadReturn = VisitStatement(thenSt, insideFunction) || hadReturn; return hadReturn; }
-
                 var L_then = A.NewLabel("THEN");
-                var L_end = A.NewLabel("ENDI");
+                var L_end = A.NewLabel("ENDIF");
 
                 EmitConditionEq(cond);              // 0 si verdadero
                 A.Emit($"0BRANCH {L_then}");
+                if (elseSt != null) { VisitStatement(elseSt, insideFunction); }
                 A.Emit($"JUMP {L_end}");
                 A.Mark(L_then);
                 hadReturn = VisitStatement(thenSt, insideFunction) || hadReturn;
@@ -388,8 +401,6 @@ namespace PL0_Language.Codegen
                 var cond = ChildByName(node, "Condition");
                 var body = node.ChildNodes.LastOrDefault(c => c.Term.Name == "Statement");
                 if (cond == null || body == null) return false;
-
-                if (TryConstEq(cond, out bool eq2) && !eq2) return false;
 
                 var L_top = A.NewLabel("WH");
                 var L_body = A.NewLabel("WB");
@@ -444,8 +455,6 @@ namespace PL0_Language.Codegen
             var e = ChildrenByName(node, "Expression").ToList();
             if (e.Count == 2)
             {
-                if (TryConstExpr(e[0], out var v1) && TryConstExpr(e[1], out var v2))
-                { A.Emit($"LIT {(v1 == v2 ? 0 : 1)}"); return; }
                 EmitExpression(e[0]);
                 EmitExpression(e[1]);
                 A.Emit("SUB"); // 0 si iguales
@@ -455,68 +464,208 @@ namespace PL0_Language.Codegen
                 if (e.Count == 1) { EmitExpression(e[0]); } else A.Emit("LIT 1");
             }
         }
-        private bool TryConstEq(ParseTreeNode node, out bool eq)
-        {
-            var e = ChildrenByName(node, "Expression").ToList();
-            if (e.Count == 2 && TryConstExpr(e[0], out var v1) && TryConstExpr(e[1], out var v2))
-            { eq = (v1 == v2); return true; }
-            eq = false; return false;
-        }
 
+        // --- NUEVO motor de emisión por niveles ---
         private void EmitExpression(ParseTreeNode n)
         {
-            if (n.Term.Name != "Expression")
-            {
-                if (n.Term.Name == "Term") { EmitTerm(n); return; }
-            }
-
-            if (n.ChildNodes.Count == 1 && n.ChildNodes[0].Term.Name == "Term")
-            { EmitTerm(n.ChildNodes[0]); return; }
-
-            if (TryConstExpr(n, out var cv)) { A.Emit($"LIT {cv}"); return; }
-
-            var left = n.ChildNodes.FirstOrDefault(c => c.Term.Name == "Expression") ??
-                        n.ChildNodes.FirstOrDefault(c => c.Term.Name == "Term");
-            var opTok = n.ChildNodes.FirstOrDefault(c => c.Term.Name == "+" || c.Term.Name == "-");
-            var right = n.ChildNodes.LastOrDefault(c => c.Term.Name == "Term");
-
-            if (left != null && opTok != null && right != null)
-            {
-                if (left.Term.Name == "Expression") EmitExpression(left); else EmitTerm(left);
-                EmitTerm(right);
-                if (opTok.Term.Name == "+") A.Emit("ADD"); else A.Emit("SUB");
-                return;
-            }
-
-            var t = n.ChildNodes.FirstOrDefault(c => c.Term.Name == "Term");
-            if (t != null) { EmitTerm(t); return; }
+            // Expression -> OrExpr (por regla)
+            var or = ChildByName(n, "OrExpr") ?? n;
+            EmitOr(or);
         }
 
-        private void EmitTerm(ParseTreeNode n)
+        private void EmitOr(ParseTreeNode n)
         {
-            if (n.ChildNodes.Count == 1 && n.ChildNodes[0].Term.Name == "Factor")
-            { EmitFactor(n.ChildNodes[0]); return; }
+            if (n.Term.Name != "OrExpr") { EmitXor(n); return; }
 
-            if (TryConstTerm(n, out var cv)) { A.Emit($"LIT {cv}"); return; }
+            // OrExpr -> OrExpr 'or|nor' XorExpr | XorExpr
+            var left = n.ChildNodes.FirstOrDefault(c => c.Term.Name == "OrExpr");
+            var op = n.ChildNodes.FirstOrDefault(c => c.Term.Name == "or" || c.Term.Name == "nor");
+            var right = n.ChildNodes.FirstOrDefault(c => c.Term.Name == "XorExpr");
 
-            var left = n.ChildNodes.FirstOrDefault(c => c.Term.Name == "Term") ??
-                        n.ChildNodes.FirstOrDefault(c => c.Term.Name == "Factor");
-            var opTok = n.ChildNodes.FirstOrDefault(c => c.Term.Name == "*" || c.Term.Name == "/");
-            var right = n.ChildNodes.LastOrDefault(c => c.Term.Name == "Factor");
-
-            if (left != null && opTok != null && right != null)
+            if (left == null || op == null || right == null)
             {
-                if (left.Term.Name == "Term") EmitTerm(left); else EmitFactor(left);
-                EmitFactor(right);
-                if (opTok.Term.Name == "*") A.Emit("CALL mul"); else A.Emit("CALL div");
+                var x = n.ChildNodes.FirstOrDefault(c => c.Term.Name == "XorExpr") ?? n.ChildNodes.FirstOrDefault();
+                if (x != null) EmitXor(x);
                 return;
             }
 
-            var f = n.ChildNodes.FirstOrDefault(c => c.Term.Name == "Factor");
-            if (f != null) EmitFactor(f);
+            EmitOr(left);
+            EmitXor(right);
+
+            if (op.Term.Name == "or") A.Emit("OR");
+            else /* nor */                   { A.Emit("OR"); A.Emit("INVERT"); }
         }
 
-        private void EmitFactor(ParseTreeNode n)
+        private void EmitXor(ParseTreeNode n)
+        {
+            if (n.Term.Name != "XorExpr") { EmitAnd(n); return; }
+
+            var left = n.ChildNodes.FirstOrDefault(c => c.Term.Name == "XorExpr");
+            var op = n.ChildNodes.FirstOrDefault(c => c.Term.Name == "xor" || c.Term.Name == "nxor");
+            var right = n.ChildNodes.FirstOrDefault(c => c.Term.Name == "AndExpr");
+
+            if (left == null || op == null || right == null)
+            {
+                var a = n.ChildNodes.FirstOrDefault(c => c.Term.Name == "AndExpr") ?? n.ChildNodes.FirstOrDefault();
+                if (a != null) EmitAnd(a);
+                return;
+            }
+
+            EmitXor(left);
+            EmitAnd(right);
+
+            if (op.Term.Name == "xor") A.Emit("XOR");
+            else /* nxor */                  { A.Emit("XOR"); A.Emit("INVERT"); }
+        }
+
+        private void EmitAnd(ParseTreeNode n)
+        {
+            if (n.Term.Name != "AndExpr") { EmitAdd(n); return; }
+
+            var left = n.ChildNodes.FirstOrDefault(c => c.Term.Name == "AndExpr");
+            var op = n.ChildNodes.FirstOrDefault(c => c.Term.Name == "and" || c.Term.Name == "nand");
+            var right = n.ChildNodes.FirstOrDefault(c => c.Term.Name == "AddExpr");
+
+            if (left == null || op == null || right == null)
+            {
+                var a = n.ChildNodes.FirstOrDefault(c => c.Term.Name == "AddExpr") ?? n.ChildNodes.FirstOrDefault();
+                if (a != null) EmitAdd(a);
+                return;
+            }
+
+            EmitAnd(left);
+            EmitAdd(right);
+
+            if (op.Term.Name == "and") A.Emit("AND");
+            else /* nand */                  { A.Emit("AND"); A.Emit("INVERT"); }
+        }
+
+        private void EmitAdd(ParseTreeNode n)
+        {
+            if (n.Term.Name != "AddExpr") { EmitMul(n); return; }
+
+            var left = n.ChildNodes.FirstOrDefault(c => c.Term.Name == "AddExpr");
+            var op = n.ChildNodes.FirstOrDefault(c => c.Term.Name == "+" || c.Term.Name == "-");
+            var right = n.ChildNodes.FirstOrDefault(c => c.Term.Name == "MulExpr");
+
+            if (left == null || op == null || right == null)
+            {
+                var m = n.ChildNodes.FirstOrDefault(c => c.Term.Name == "MulExpr") ?? n.ChildNodes.FirstOrDefault();
+                if (m != null) EmitMul(m);
+                return;
+            }
+
+            EmitAdd(left);
+            EmitMul(right);
+
+            if (op.Term.Name == "+") A.Emit("ADD"); else A.Emit("SUB");
+        }
+
+        private void EmitMul(ParseTreeNode n)
+        {
+            if (n.Term.Name != "MulExpr") { EmitShift(n); return; }
+
+            var left = n.ChildNodes.FirstOrDefault(c => c.Term.Name == "MulExpr");
+            var op = n.ChildNodes.FirstOrDefault(c => c.Term.Name == "*" || c.Term.Name == "/");
+            var right = n.ChildNodes.FirstOrDefault(c => c.Term.Name == "ShiftExpr");
+
+            if (left == null || op == null || right == null)
+            {
+                var s = n.ChildNodes.FirstOrDefault(c => c.Term.Name == "ShiftExpr") ?? n.ChildNodes.FirstOrDefault();
+                if (s != null) EmitShift(s);
+                return;
+            }
+
+            EmitMul(left);
+            EmitShift(right);
+
+            if (op.Term.Name == "*") A.Emit("CALL mul"); else A.Emit("CALL div");
+        }
+
+        private void EmitShift(ParseTreeNode n)
+        {
+            if (n.Term.Name != "ShiftExpr") { EmitUnary(n); return; }
+
+            var left = n.ChildNodes.FirstOrDefault(c => c.Term.Name == "ShiftExpr");
+            var op = n.ChildNodes.FirstOrDefault(c => c.Term.Name == "<<" || c.Term.Name == ">>");
+            var count = n.ChildNodes.FirstOrDefault(c => c.Term.Name == "ShiftCount" || c.Term.Name == "number" || c.Term.Name == "identifier");
+
+            if (left == null || op == null || count == null)
+            {
+                var u = n.ChildNodes.FirstOrDefault(c => c.Term.Name == "UnaryExpr") ?? n.ChildNodes.FirstOrDefault();
+                if (u != null) EmitUnary(u);
+                return;
+            }
+
+            // Emite el operando izquierdo primero
+            EmitShift(left);
+
+            // Obtiene nbits desde number o identifier (const)
+            int nbits = 0;
+            ParseTreeNode? numNode = null, idNode = null;
+
+            if (count.Term.Name == "ShiftCount" && count.ChildNodes.Count > 0)
+            {
+                numNode = count.ChildNodes.FirstOrDefault(c => c.Term.Name == "number");
+                idNode = count.ChildNodes.FirstOrDefault(c => c.Term.Name == "identifier");
+            }
+            else
+            {
+                if (count.Term.Name == "number") numNode = count;
+                if (count.Term.Name == "identifier") idNode = count;
+            }
+
+            if (numNode != null)
+            {
+                nbits = TokenInt(numNode);
+            }
+            else if (idNode != null)
+            {
+                var name = TokenText(idNode);
+                var cval = Syms.GetConst(name);
+                if (!cval.HasValue)
+                    throw new InvalidOperationException($"El desplazamiento '{name}' debe ser una constante.");
+                nbits = cval.Value;
+            }
+            else
+            {
+                throw new InvalidOperationException("Cuenta de corrimiento inválida.");
+            }
+
+            // Restringe a 1..15 como definiste
+            if (nbits < 1) nbits = 1;
+            if (nbits > 15) nbits = 15;
+
+            // Emite n veces el corrimiento unitario
+            if (op.Term.Name == "<<")
+                for (int i = 0; i < nbits; i++) A.Emit("LSHIFT");
+            else
+                for (int i = 0; i < nbits; i++) A.Emit("RSHIFT");
+        }
+
+
+        private void EmitUnary(ParseTreeNode n)
+        {
+            if (n.Term.Name != "UnaryExpr")
+            {
+                EmitPrimary(n);
+                return;
+            }
+
+            var notTok = n.ChildNodes.FirstOrDefault(c => c.Term.Name == "not");
+            var rest = n.ChildNodes.FirstOrDefault(c => c.Term.Name == "UnaryExpr" || c.Term.Name == "Primary");
+
+            if (notTok != null && rest != null)
+            {
+                EmitUnary(rest);
+                A.Emit("INVERT");
+                return;
+            }
+
+            if (rest != null) EmitPrimary(rest);
+        }
+
+        private void EmitPrimary(ParseTreeNode n)
         {
             var funCall = ChildByName(n, "FunCall");
             if (funCall != null)
@@ -551,12 +700,16 @@ namespace PL0_Language.Codegen
             var num = ChildByName(n, "number");
             if (num != null) { A.Emit($"LIT {TokenInt(num)}"); return; }
 
+            var ch = ChildByName(n, "charlit");
+            if (ch != null) { A.Emit($"LIT {TokenChar(ch)}"); return; }
+
             var expr = ChildByName(n, "Expression");
             if (expr != null) { EmitExpression(expr); return; }
 
             if (n.Token != null)
             {
                 if (n.Term.Name == "number") { A.Emit($"LIT {TokenInt(n)}"); return; }
+                if (n.Term.Name == "charlit") { A.Emit($"LIT {TokenChar(n)}"); return; }
                 if (n.Term.Name == "identifier")
                 {
                     var name = TokenText(n);
@@ -570,78 +723,12 @@ namespace PL0_Language.Codegen
             A.Emit("LIT 0");
         }
 
+        // ===== Plegado de constantes (opcional: aquí dejamos aritmético básico) =====
+        // Para simplificar, dejamos el plegado original en +,-,*,/
         private bool TryConstExpr(ParseTreeNode node, out int value)
         {
+            // (Puedes extender el plegado a bit a bit si lo necesitas)
             value = 0;
-            if (node.Term.Name == "Expression")
-            {
-                if (node.ChildNodes.Count == 1 && node.ChildNodes[0].Term.Name == "Term")
-                    return TryConstTerm(node.ChildNodes[0], out value);
-
-                var left = node.ChildNodes.FirstOrDefault(c => c.Term.Name == "Expression");
-                var opTok = node.ChildNodes.FirstOrDefault(c => c.Term.Name == "+" || c.Term.Name == "-");
-                var right = node.ChildNodes.FirstOrDefault(c => c.Term.Name == "Term");
-
-                if (left != null && opTok != null && right != null &&
-                    TryConstExpr(left, out var l) && TryConstTerm(right, out var r))
-                {
-                    value = (opTok.Term.Name == "+") ? (l + r) : (l - r);
-                    return true;
-                }
-            }
-            return TryConstTerm(node, out value);
-        }
-
-        private bool TryConstTerm(ParseTreeNode node, out int value)
-        {
-            value = 0;
-            if (node.Term.Name == "Term")
-            {
-                if (node.ChildNodes.Count == 1 && node.ChildNodes[0].Term.Name == "Factor")
-                    return TryConstFactor(node.ChildNodes[0], out value);
-
-                var left = node.ChildNodes.FirstOrDefault(c => c.Term.Name == "Term");
-                var opTok = node.ChildNodes.FirstOrDefault(c => c.Term.Name == "*" || c.Term.Name == "/");
-                var right = node.ChildNodes.FirstOrDefault(c => c.Term.Name == "Factor");
-
-                if (left != null && opTok != null && right != null &&
-                    TryConstTerm(left, out var l) && TryConstFactor(right, out var r))
-                {
-                    if (opTok.Term.Name == "*") { value = l * r; return true; }
-                    if (opTok.Term.Name == "/") { value = (r == 0) ? 0 : (l / r); return true; }
-                }
-            }
-            return TryConstFactor(node, out value);
-        }
-
-        private bool TryConstFactor(ParseTreeNode node, out int value)
-        {
-            value = 0;
-            var num = ChildByName(node, "number");
-            if (num != null) { value = TokenInt(num); return true; }
-
-            var id = ChildByName(node, "identifier");
-            if (id != null)
-            {
-                var name = TokenText(id);
-                var c = Syms.GetConst(name);
-                if (c.HasValue) { value = c.Value; return true; }
-                return false;
-            }
-
-            var expr = ChildByName(node, "Expression");
-            if (expr != null) return TryConstExpr(expr, out value);
-
-            if (node.Token != null)
-            {
-                if (node.Term.Name == "number") { value = TokenInt(node); return true; }
-                if (node.Term.Name == "identifier")
-                {
-                    var name = TokenText(node);
-                    var c = Syms.GetConst(name);
-                    if (c.HasValue) { value = c.Value; return true; }
-                }
-            }
             return false;
         }
     }

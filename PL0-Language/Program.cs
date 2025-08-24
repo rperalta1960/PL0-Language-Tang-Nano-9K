@@ -14,34 +14,88 @@ namespace PL0_Language
         {
             // Programa de prueba (factorial y fibonacci)
             string code = @"
-                const n = 5;
-                var result1, result2;
+                // ======== Programa PL/0 de prueba total ========
+                // Ejercita: operadores bit a bit, corrimientos,
+                // literales char, if-else, procedimientos,
+                // funciones recursivas y E/S.
+
+                const a = 0x00F0, b = 0x0F0F, n1 = 1, n4 = 4, n15 = 15;
+                var
+                  r_or, r_nor, r_and, r_nand, r_xor, r_nxor, r_not,
+                  r_shl1, r_shl15, r_shr4,
+                  ch, out1, out2, fa;
+
+                procedure show(label: integer, value: integer);
+                begin
+                    !label; !value  // imprime etiqueta y valor
+                end;
+
+                function id_char(c: char): integer;
+                begin
+                    return c  // devuelve el código del carácter
+                end;
+
+                function isA(c: char): integer;
+                begin
+                    (* if-else clásico: devuelve 1 si es 'A', de lo contrario 0 *)
+                    if c = 'A' then
+                        return 1
+                    else
+                        return 0
+                end;
 
                 function fact(x: integer): integer;
                 begin
+                    // recursión: factorial
                     if x = 0 then
                         return 1
                     else
                         return x * fact(x - 1)
                 end;
 
-                function fib(x: integer): integer;
                 begin
-                    if x = 0 then
-                        return 0
-                    else
-                        if x = 1 then
-                            return 1
-                        else
-                            return fib(x - 1) + fib(x - 2)
-                end;
+                    // --- Operadores bit a bit ---
+                    r_or   := a or b;
+                    r_nor  := a nor b;
+                    r_and  := a and b;
+                    r_nand := a nand b;
+                    r_xor  := a xor b;
+                    r_nxor := a nxor b;
+                    r_not  := not a;
 
-                begin
-                    result1 := fact(n);    // 120
-                    !result1;
-                    result2 := fib(5);     // 5
-                    !result2
+                    // --- Corrimientos (1..15) ---
+                    r_shl1  := a << n1;
+                    r_shl15 := a << n15;
+                    r_shr4  := b >> n4;
+
+                    // --- Literales y parámetros char ---
+                    ch   := id_char('Z');
+                    out1 := isA('A');   // 1
+                    out2 := isA('Z');   // 0
+
+                    // --- Recursión (factorial de 5) ---
+                    fa := fact(5);      // 120
+
+                    // --- Mostrar resultados ---
+                    call show(1001, r_or);
+                    call show(1002, r_nor);
+                    call show(1003, r_and);
+                    call show(1004, r_nand);
+                    call show(1005, r_xor);
+                    call show(1006, r_nxor);
+                    call show(1007, r_not);
+
+                    call show(1011, r_shl1);
+                    call show(1015, r_shl15);
+                    call show(1040, r_shr4);
+
+                    call show(2001, ch);
+                    call show(2002, out1);
+                    call show(2003, out2);
+
+                    call show(3001, fa)
                 end.
+
             ";
 
             var grammar = new Pl0Grammar();
